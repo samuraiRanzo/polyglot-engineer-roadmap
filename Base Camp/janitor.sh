@@ -2,6 +2,7 @@
 
 # --- Configuration ---
 REGISTRY="port_registry.txt"
+TEMP_REGISTRY="registry.tmp"
 
 # --- Validation ---
 if [[ "$PWD" != *"/Base Camp" ]]; then
@@ -22,7 +23,6 @@ manage_project() {
 
     if [ -d "$full_path" ]; then
         echo "🚀 Executing [$action] on project: $(basename "$project_path")"
-        # -d flag ensures start/restart happens in the background
         (cd "$full_path" && docker compose $action)
         echo "✅ Action [$action] completed."
     else
@@ -34,17 +34,19 @@ manage_project() {
 echo "========================================================"
 echo "🐳 DOCKER MANAGER: Homelab Resource Orchestrator"
 echo "========================================================"
-echo "1) START a project (by Port)"
-echo "2) STOP a project (by Port)"
-echo "3) RESTART a project (by Port)"
-echo "4) STOP ALL registered projects (Emergency RAM Clear)"
-echo "5) LIST all registered projects"
-echo "6) Exit"
+echo "1) START a project (up -d)"
+echo "2) STOP a project (hibernation)"
+echo "3) RESTART a project"
+echo "4) DESTROY a project (Wipes all data/volumes) 🔥"
+echo "5) STOP ALL registered projects (RAM Clear)"
+echo "6) LIST all registered projects"
+echo "7) CLEANUP Registry (Remove missing project folders) 🧹"
+echo "8) Exit"
 echo "--------------------------------------------------------"
-read -p "Select an option [1-6]: " CHOICE
+read -p "Select an option [1-8]: " CHOICE
 
 case $CHOICE in
-    1|2|3)
+    1|2|3|4)
         read -p "Enter the port number (FE or BE): " TARGET_PORT
         PROJECT_DATA=$(grep ":$TARGET_PORT:" "$REGISTRY")
 
@@ -54,18 +56,25 @@ case $CHOICE in
             if [ "$CHOICE" == "1" ]; then manage_project "up -d" "$TARGET_PATH"
             elif [ "$CHOICE" == "2" ]; then manage_project "stop" "$TARGET_PATH"
             elif [ "$CHOICE" == "3" ]; then manage_project "restart" "$TARGET_PATH"
+            elif [ "$CHOICE" == "4" ]; then
+                read -p "⚠️ Are you sure? This wipes the database. [y/N]: " CONFIRM
+                if [[ "$CONFIRM" =~ ^[Yy]$ ]]; then
+                    manage_project "down -v" "$TARGET_PATH"
+                else
+                    echo "❌ Aborted."
+                fi
             fi
         else
             echo "❌ Port $TARGET_PORT is not in the registry."
         fi
         ;;
-    4)
+    5)
         echo "🧨 Stopping all projects in $REGISTRY..."
         while IFS=: read -r id fe be path; do
             manage_project "stop" "$path"
         done < "$REGISTRY"
         ;;
-    5)
+    6)
         echo "📋 Project Registry:"
         printf "%-5s | %-8s | %-8s | %-s\n" "ID" "FE Port" "BE Port" "Path"
         echo "--------------------------------------------------------"
@@ -73,8 +82,24 @@ case $CHOICE in
             printf "%-5s | %-8s | %-8s | %-s\n" "$id" "$fe" "$be" "$path"
         done < "$REGISTRY"
         ;;
+    7)
+        echo "🧹 Scanning for missing folders..."
+        > "$TEMP_REGISTRY"
+        REMOVED_COUNT=0
+
+        while IFS=: read -r id fe be path; do
+            if [ -d "../$path" ]; then
+                echo "$id:$fe:$be:$path" >> "$TEMP_REGISTRY"
+            else
+                echo "🗑️ Removing ghost entry: $id ($path)"
+                ((REMOVED_COUNT++))
+            fi
+        done < "$REGISTRY"
+
+        mv "$TEMP_REGISTRY" "$REGISTRY"
+        echo "✨ Done. $REMOVED_COUNT stale entries removed from $REGISTRY."
+        ;;
     *)
-        echo "👋 Manager exiting."
         exit 0
         ;;
 esac
